@@ -1,9 +1,12 @@
+#!/usr/bin/env python3
+# consumer.py — lee eventos, analiza y dispara alertas
+
 import os
 import time
 import json
 import requests
 from dotenv import load_dotenv
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 load_dotenv()
 
@@ -39,21 +42,22 @@ def read_events():
         return []
     with open(EVENT_LOG_FILE, "r") as f:
         lines = f.readlines()
-    cutoff = datetime.utcnow() - timedelta(minutes=WINDOW_MINUTES)
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=WINDOW_MINUTES)
     events = []
     for line in lines:
         try:
             data = json.loads(line.strip())
-            ts = datetime.fromisoformat(data["timestamp"])
+            ts = datetime.fromisoformat(data["timestamp"].replace("Z", "+00:00"))
             if ts > cutoff:
                 events.append(data)
-        except:
+        except Exception as e:
+            print(f"⚠️ Error parseando evento: {e} -> {line.strip()}")
             continue
     return events
 
 def analyze(events):
     if not events:
-        return {"score": 0.0, "text": "Sin eventos recientes."}
+        return {"score": 0.0, "text": f"Sin eventos recientes. Timestamp: {datetime.now(timezone.utc).isoformat()}"}
 
     prompt = f"{PROMPT_ANALYSIS}\nEventos:\n{json.dumps(events, ensure_ascii=False)}"
 
