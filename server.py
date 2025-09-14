@@ -237,4 +237,4 @@ def analyze(hours: int = Query(1, ge=1, le=168, description="Horas hacia atrás 
 if __name__ == "__main__":
     schedule_cleanup_daily()
     import uvicorn
-    uvicorn.run("server:app", host="0.0.0.0", port=8000, reload=False)
+    uvicorn.run("server:app", host="0.0.0.0", port=8001, reload=False)
