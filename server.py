@@ -8,12 +8,14 @@ import requests
 import datetime as dt
 from typing import Optional, List
 from fastapi import FastAPI, Query
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from dotenv import load_dotenv
 import threading
 import time
 
 load_dotenv()
+
 
 # ===== Config (.env) =====
 OPENAI_API_KEY   = os.getenv("OPENAI_API_KEY", "")
@@ -37,6 +39,23 @@ LOG_CLEAN_DAYS   = int(os.getenv("LOG_CLEAN_DAYS", "30"))
 
 # ===== App =====
 app = FastAPI()
+
+# CORS para permitir inyección desde navegador (p. ej., 127.0.0.1:5500)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost",
+        "http://localhost:5500",
+        "http://127.0.0.1",
+        "http://127.0.0.1:5500",
+        "http://0.0.0.0",
+        "http://0.0.0.0:5500",
+        "*",  # desarrollo; restringir en producción
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # ===== Modelos =====
 class Event(BaseModel):
@@ -238,3 +257,5 @@ if __name__ == "__main__":
     schedule_cleanup_daily()
     import uvicorn
     uvicorn.run("server:app", host="0.0.0.0", port=8001, reload=False)
+
+
