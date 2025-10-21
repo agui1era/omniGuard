@@ -1,18 +1,19 @@
-# omni_guard.py
+# omni_guard.py (versión robusta)
 import os
 import cv2
 import time
 import re
 import base64
 import requests
+import sys
 from dotenv import load_dotenv
 
 # =========================
-# Configuración y constantes
+# Configuración
 # =========================
 load_dotenv()
 
-LM_STUDIO_API = os.getenv("LM_STUDIO_API", "http://agentes.alabs.cl:9000/v1/chat/completions")
+LM_STUDIO_API = os.getenv("LM_STUDIO_API", "http://localhost:1234/v1/chat/completions")
 MODEL_NAME = os.getenv("MODEL_NAME", "qwen3-vl-8b")
 
 CAMERA_INDEX = int(os.getenv("CAMERA_INDEX", 0))
@@ -24,14 +25,13 @@ FRAME_MAX_WIDTH = int(os.getenv("FRAME_MAX_WIDTH", 960))
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 RISK_THRESHOLD = float(os.getenv("RISK_THRESHOLD", 0.8))
-SHOW_WINDOW = os.getenv("SHOW_WINDOW", "0")
 
 # =========================
 # Utilidades
 # =========================
 def log(msg, color="\033[0m"):
     ts = time.strftime("%H:%M:%S")
-    print(f"{color}[{ts}] {msg}\033[0m")
+    print(f"{color}[{ts}] {msg}\033[0m", flush=True)
 
 def resize_if_needed(frame, max_width: int):
     if max_width and frame.shape[1] > max_width:
@@ -39,26 +39,6 @@ def resize_if_needed(frame, max_width: int):
         new_size = (int(frame.shape[1] * scale), int(frame.shape[0] * scale))
         frame = cv2.resize(frame, new_size, interpolation=cv2.INTER_AREA)
     return frame
-
-def overlay_info(frame, texto: str, riesgo):
-    overlay = frame.copy()
-    header = f"RISK={riesgo:.2f}" if isinstance(riesgo, (int, float)) else "RISK=?"
-    primera_linea = (texto or "").splitlines()[0][:90] if texto else ""
-    bar_h = 40
-
-    if riesgo is None:
-        color = (200, 200, 200)
-    elif riesgo < 0.33:
-        color = (80, 200, 120)
-    elif riesgo < 0.66:
-        color = (0, 200, 255)
-    else:
-        color = (0, 0, 255)
-
-    cv2.rectangle(overlay, (0, 0), (frame.shape[1], bar_h), (30, 30, 30), -1)
-    cv2.putText(overlay, header, (12, 26), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2, cv2.LINE_AA)
-    cv2.putText(overlay, primera_linea, (140, 26), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (230, 230, 230), 1, cv2.LINE_AA)
-    return cv2.addWeighted(overlay, 0.85, frame, 0.15, 0)
 
 def a_b64_jpg(frame):
     ok, buf = cv2.imencode('.jpg', frame, [int(cv2.IMWRITE_JPEG_QUALITY), 85])
@@ -72,9 +52,9 @@ def a_b64_jpg(frame):
 # =========================
 SYSTEM_PROMPT = (
     "Eres un analista visual para detección de riesgo en seguridad física.\n"
-    "Responde SIEMPRE en el siguiente formato, sin variarlo:\n\n"
-    "DESCRIPCION: <una frase breve que describa la escena>\n"
-    "RIESGOS: <lista breve de riesgos detectados u 'ninguno'>\n"
+    "Responde SIEMPRE en el siguiente formato:\n\n"
+    "DESCRIPCION: <una frase breve>\n"
+    "RIESGOS: <lista de riesgos o 'ninguno'>\n"
     "ACCION: <recomendación breve>\n"
     "RISK=<valor entre 0 y 1 con hasta 2 decimales>\n\n"
 )
@@ -96,12 +76,12 @@ def analizar_imagen(frame):
             else:
                 log(f"[LLM] HTTP {resp.status_code}: {resp.text[:150]}", "\033[33m")
         except requests.exceptions.Timeout:
-            log(f"[LLM] Timeout tras {TIMEOUT}s", "\033[33m")
-        except Exception as e:
-            log(f"[LLM] Excepción: {e}", "\033[31m")
-        time.sleep(1)
+            log(f"[LLM] Timeout tras {TIMEOUT}s (intento {attempt})", "\033[33m")
+        except requests.exceptions.RequestException as e:
+            log(f"[LLM] Error de conexión: {e}", "\033[31m")
+        time.sleep(2)
 
-    return "❌ Sin respuesta tras reintentos\nRISK=0.00", im_b64
+    return None, im_b64
 
 # =========================
 # Parsing de riesgo
@@ -114,8 +94,7 @@ def extraer_riesgo(texto: str):
     if m:
         try:
             val = float(m.group(1))
-            if 0.0 <= val <= 1.0:
-                return val
+            return val if 0.0 <= val <= 1.0 else None
         except ValueError:
             pass
     return None
@@ -136,7 +115,7 @@ def enviar_telegram(im_b64: str, desc: str):
         return None, f"Error al enviar a Telegram: {e}"
 
 # =========================
-# Búsqueda de cámara y loop principal
+# Cámara + bucle principal
 # =========================
 def buscar_camara():
     log("🎥 Buscando cámara disponible...", "\033[36m")
@@ -151,25 +130,32 @@ def buscar_camara():
             cap.release()
     return None
 
+def reiniciar_programa():
+    log("🔄 Reiniciando programa...", "\033[35m")
+    os.execv(sys.executable, ['python'] + sys.argv)
+
 def main():
-    cap = None
-    if AUTO_CAMERA_SCAN:
-        cap = buscar_camara()
-    else:
-        cap = cv2.VideoCapture(CAMERA_INDEX)
+    cap = buscar_camara() if AUTO_CAMERA_SCAN else cv2.VideoCapture(CAMERA_INDEX)
     if not cap or not cap.isOpened():
         log("❌ No se encontró cámara funcional.", "\033[31m")
         return
 
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-    log("🎬 Iniciando captura. Ctrl+C para salir.", "\033[36m")
+    log("🎬 Iniciando captura (Ctrl+C para salir)", "\033[36m")
 
-    ultimo_envio_ts = 0.0
     fail_count = 0
+    internet_failures = 0
+    start_time = time.time()
+    ultimo_envio_ts = 0.0
 
     try:
         while True:
+            # Reinicio automático cada 24 horas
+            if time.time() - start_time >= 86400:
+                log("⏰ 24h cumplidas, reiniciando.", "\033[35m")
+                reiniciar_programa()
+
             ok, frame = cap.read()
             if not ok:
                 fail_count += 1
@@ -185,7 +171,16 @@ def main():
             frame = resize_if_needed(frame, FRAME_MAX_WIDTH)
 
             texto, im_b64 = analizar_imagen(frame)
+            if texto is None:
+                internet_failures += 1
+                log(f"🌐 Error de conexión {internet_failures}/20", "\033[33m")
+                if internet_failures >= 20:
+                    log("💥 Pérdida de conexión persistente, reiniciando sistema.", "\033[31m")
+                    reiniciar_programa()
+                continue
+
             riesgo = extraer_riesgo(texto)
+            internet_failures = 0
 
             log("──────── RESULTADO LLM ────────", "\033[37m")
             print(texto)
@@ -194,7 +189,7 @@ def main():
             now = time.time()
             if riesgo is not None and riesgo >= RISK_THRESHOLD and (now - ultimo_envio_ts) >= INTERVAL:
                 status, resp = enviar_telegram(im_b64, texto)
-                log(f"📨 Telegram: {status} {resp[:150]}", "\033[36m")
+                log(f"📨 Telegram: {status} {resp[:120]}", "\033[36m")
                 ultimo_envio_ts = now
 
             time.sleep(INTERVAL)
@@ -203,8 +198,6 @@ def main():
         log("🛑 Captura finalizada por el usuario.", "\033[31m")
     finally:
         cap.release()
-        if SHOW_WINDOW:
-            cv2.destroyAllWindows()
 
 if __name__ == "__main__":
     main()
