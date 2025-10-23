@@ -1,4 +1,4 @@
-# omni_guard.py (versión robusta)
+
 import os
 import cv2
 import time
@@ -13,7 +13,7 @@ from dotenv import load_dotenv
 # =========================
 load_dotenv()
 
-LM_STUDIO_API = os.getenv("LM_STUDIO_API", "http://localhost:1234/v1/chat/completions")
+LM_STUDIO_API = os.getenv("LM_STUDIO_API", "http://agentes.alabs.cl:8888/v1/chat/completions")
 MODEL_NAME = os.getenv("MODEL_NAME", "qwen3-vl-8b")
 
 CAMERA_INDEX = int(os.getenv("CAMERA_INDEX", 0))
@@ -51,12 +51,22 @@ def a_b64_jpg(frame):
 # LLM: análisis de imagen
 # =========================
 SYSTEM_PROMPT = (
-    "Eres un analista visual para detección de riesgo en seguridad física.\n"
-    "Responde SIEMPRE en el siguiente formato:\n\n"
-    "DESCRIPCION: <una frase breve>\n"
-    "RIESGOS: <lista de riesgos o 'ninguno'>\n"
-    "ACCION: <recomendación breve>\n"
-    "RISK=<valor entre 0 y 1 con hasta 2 decimales>\n\n"
+    "Prompt: Monitoreo y Cuidado de Adulto Mayor"
+    "Eres un asistente de vigilancia y cuidado de adultos mayores."  
+    "Analizas imágenes en tiempo real para detectar presencia, actividad, caídas u otras situaciones inusuales, y envías alertas automáticas a los cuidadores con la imagen y descripción del evento."
+
+    "Instrucciones:"  
+    "- Describe brevemente lo que ocurre en la imagen."  
+    "- Indica si el adulto mayor está de pie, sentado, acostado o ausente."  
+    "- Señala si parece necesitar ayuda (caída, desorientación, inactividad prolongada)."  
+    "- Si detectas riesgo físico o de salud, marca la alerta como prioritaria."  
+    "- Usa un tono empático y profesional."
+
+    "Formato de salida:"  
+    "Descripción: <qué ocurre en la escena>"  
+    "Evaluación: <actividad normal o posible riesgo>"  
+    "Alerta: <enviar a cuidadores si corresponde>"  
+    "RISK=<valor entre 0.0 y 1.0>"
 )
 
 def analizar_imagen(frame):
